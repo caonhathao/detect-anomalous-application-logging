@@ -1,0 +1,8 @@
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 --no-cache-dir --force-reinstall --upgrade
+
+llama-cpp-python
+matplotlib
+pandas
+regex
+python-dotenv
+openai
