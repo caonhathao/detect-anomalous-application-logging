@@ -5,3 +5,4 @@ logs
 training_data
 demo/missed_logs.txt
 demo/debug_logs
+output_logs
