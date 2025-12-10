@@ -1,0 +1,5 @@
+Config 1:
+- AMD Ryzen 7 8745H with Radeon 780M Graphics, 16gb RAM, GPU NVIDIA Gẻoce RTX 4060 Laptop
+ python version 3.12
+ install cuda toolkit
+ https://github.com/LostRuins/koboldcpp/releases
