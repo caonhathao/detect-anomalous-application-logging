@@ -1,5 +1,7 @@
 .env
 
-
-output_logs
+venv
+logs
 training_data
+demo/missed_logs.txt
+demo/debug_logs
