@@ -78,8 +78,8 @@ def _write_chunk(folder, count, content_list):
 # --- CẤU HÌNH SỬ DỤNG ---
 if __name__ == "__main__":
     # Thay đổi tên file của bạn ở đây
-    FILE_LOG_GOC = "C:\\Users\\LEGION\\Documents\\github\\detect-anomalous-application-logging\\logs\\merged_output.txt"
-    THU_MUC_OUT = "C:\\Users\\LEGION\\Documents\\github\\detect-anomalous-application-logging\\logs\\csic_2010_test"
+    FILE_LOG_GOC = "E:\\ProjectDev\\detect-anomaly-logging\\detect-anomalous-application-logging\\data\\merged_output.txt"
+    THU_MUC_OUT = "E:\\ProjectDev\\detect-anomaly-logging\\detect-anomalous-application-logging\\data\\csic_2010_test"
     
     # Vì bạn muốn 4-8KB, tôi để target là 6KB. 
     # Code sẽ gom log cho đến khi vượt 6KB thì ngắt sang file mới.

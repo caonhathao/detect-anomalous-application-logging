@@ -1,11 +1,9 @@
 from llama_cpp import Llama
 from dotenv import load_dotenv
 import os
+from config import MODEL_PATH
 
 load_dotenv()
-
-# Đường dẫn model (sửa lại cho đúng file trên máy bạn)
-MODEL_PATH = os.getenv("MODEL_PATH")
 
 print("Test loading model...")
 llm = Llama(

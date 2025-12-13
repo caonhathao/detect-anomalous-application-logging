@@ -3,3 +3,4 @@ Config 1:
  python version 3.12
  install cuda toolkit
  https://github.com/LostRuins/koboldcpp/releases
+ install llama_cpp_python-0.3.16+cuda12.1.sm75.turing-cp312-cp312-win_amd64.whl
