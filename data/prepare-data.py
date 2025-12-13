@@ -4,7 +4,7 @@ import urllib.parse
 import json
 
 # --- CONFIG ---
-INPUT_FOLDER = "output_logs/_csic_2010_raw"
+INPUT_FOLDER = "../output_logs/_csic_2010_raw"
 OUTPUT_FOLDER = "training_data"
 TARGET_SIZE_KB = 6  # every output jsonl file ~6 KB
 

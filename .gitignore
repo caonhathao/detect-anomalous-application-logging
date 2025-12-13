@@ -6,3 +6,5 @@ training_data
 demo/missed_logs.txt
 demo/debug_logs
 output_logs
+data/training_data
+data/csic_2010_test
