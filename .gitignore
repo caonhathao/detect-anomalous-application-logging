@@ -4,7 +4,9 @@ venv
 logs
 training_data
 demo/missed_logs.txt
-demo/debug_logs
+demo/v7-only-ai/logs_missed
 output_logs
 data/training_data
 data/csic_2010_test
+data/labeled_attack
+data/labeled_normal
