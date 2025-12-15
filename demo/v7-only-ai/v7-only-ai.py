@@ -2,232 +2,227 @@ import os
 import re
 import glob
 import time
-import urllib.parse
+import threading
+from queue import Queue, Empty
+
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
-from dotenv import load_dotenv
 from openai import OpenAI
+from dotenv import load_dotenv
 
 load_dotenv()
 
 # ===============================
-#CONFIG
+# CONFIG
 # ===============================
-LOG_FOLDER = os.getenv("LOG_FOLDER")
-NUM_THREADS = 8
-MAX_FILES = 999999
-TIMEOUT = 3
-MAX_RETRIES = 3
-BACKOFF = [0.3, 0.6, 1.0]
 
-# Get URL from .env
-raw_urls = os.getenv("API_URLS")
-if not raw_urls: 
-    print("❌ Error: API_URLS not found in file .env")
-    exit(1)
+LOG_FOLDER = os.getenv("LOG_FOLDER", "./logs")
+API_URLS = [
+    "http://localhost:5001/v1",
+    "http://localhost:5002/v1",
+]
 
-url_list = [u.strip() for u in raw_urls.split(",") if u.strip()]
-clients = [OpenAI(base_url=u, api_key="sk-no-key-needed") for u in url_list]
-
-if not LOG_FOLDER:
-    raise ValueError("LOG_FOLDER environment variable not set")
-    exit(1)
+MODEL_NAME = "koboldcpp"
+BATCH_SIZE = 2
+SCAN_INTERVAL = 0.5
+MAX_RETRIES = 2
+TIMEOUT = 8
 
 # ===============================
-# 1. PREPROCESSING (MUST MATCH 100% WITH TRAINING)
+# CLIENT POOL
 # ===============================
-def preprocess_inference(log_string):
-    try:
-        # [IMPORTANT]: If you used raw logs (not yet decoded) during training, comment out this line.
-        # If you cleaned data using this function during training, keep it as is.
-        log_string = urllib.parse.unquote(log_string) 
-        # Mask Session ID 
-        log_string = re.sub(r'(JSESSIONID=)[a-fA-F0-9]{32}', r'\1<UUID>', log_string) 
-        # Mask Host URL 
-        log_string = re.sub(r'http://[\w\-.]+:\d+', 'http://<HOST>', log_string) 
-        # Mask Host Header 
-        log_string = re.sub(r'Host:\s+[\w\-.]+:\d+', 'Host: <HOST>', log_string) 
-        return log_string.strip() 
-    except Exception: 
-        return log_string.strip()
+
+clients = [OpenAI(base_url=u, api_key="sk-none") for u in API_URLS]
+_rr = 0
+_lock = threading.Lock()
+
+def get_client():
+    global _rr
+    with _lock:
+        c = clients[_rr]
+        _rr = (_rr + 1) % len(clients)
+    return c
 
 # ===============================
-#2. PROMPT TEMPLATE (ALPACA STANDARD)
+# PARSER
 # ===============================
-    
-# This is the default template for json {"instruction":..., "input":...}
-# If you use another template, edit this string to match each character.
-PROMPT_TEMPLATE = """Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.
 
-### Instructions:
-{instruction}
+METHOD_RE = re.compile(r'^(GET|POST|PUT|DELETE|HEAD|OPTIONS)\s', re.MULTILINE)
 
-### Input:
-{input_log}
-
-### Response:
-"""
-
-AI_INSTRUCTION = "Analyze the following HTTP log and determine if it is Safe or Malicious. You MUST answer with EXACTLY ONE WORD: Safe or Malicious."
+def parse_requests(text):
+    matches = list(METHOD_RE.finditer(text))
+    reqs = []
+    for i in range(len(matches)):
+        s = matches[i].start()
+        e = matches[i+1].start() if i+1 < len(matches) else len(text)
+        chunk = text[s:e].strip()
+        if len(chunk) > 20:
+            reqs.append(chunk)
+    return reqs
 
 # ===============================
-# 3. AI EVALUATION (USING COMPLETION API)
+# MASKING
 # ===============================
-def ai_eval(filename, content, idx):
-    t0 = time.time()
-    # 1. Clean input data
-    cleaned_log = preprocess_inference(content)
-    # 2. Match to standard template (Text Completion)
-    # The model will see the correct structure it has learned
-    full_prompt = PROMPT_TEMPLATE.format(
-    instruction=AI_INSTRUCTION,
-    input_log=cleaned_log
-    )
 
-    client = clients[idx % len(clients)]
+def mask(text):
+    text = re.sub(r'\b\d{1,3}(\.\d{1,3}){3}\b', '<IP>', text)
+    text = re.sub(r'[a-f0-9]{32,}', '<HASH>', text)
+    text = re.sub(r'\b\d{6,}\b', '<NUM>', text)
+    text = re.sub(r'http://[\w\.-]+(:\d+)?', 'http://<HOST>', text)
+    return text.strip()
 
-    for r in range(MAX_RETRIES):
+# ===============================
+# PROMPT
+# ===============================
+
+def build_prompt(batch):
+    body = "\n".join(f"{i+1}. {x}" for i, x in enumerate(batch))
+    return f"""
+You are an intrusion detection system.
+
+Classify each HTTP request.
+
+Rules:
+- Malicious ONLY if clear attack intent.
+- Safe if normal traffic.
+- Suspicious if uncertain.
+- DO NOT guess.
+
+{body}
+
+Answer in order using ONLY:
+Safe
+Suspicious
+Malicious
+""".strip()
+
+# ===============================
+# FAST SCAN ONLY
+# ===============================
+
+def scan_batch(masked_logs):
+    prompt = build_prompt(masked_logs)
+
+    for _ in range(MAX_RETRIES):
         try:
-            # Use completions.create(Text) instead of chat.completions(Chat)
-            response = client.completions.create(
-                model="koboldcpp",
-                prompt=full_prompt, # Send formatted text string
-                max_tokens=10, # Only a few tokens needed for the answer
-                temperature=0, # Temperature 0 for consistent results
-                timeout=TIMEOUT,
-                stop=["\n", "###"] # Stop immediately at line break or new header
+            res = get_client().completions.create(
+                model=MODEL_NAME,
+                prompt=prompt,
+                temperature=0,
+                max_tokens=32,
+                timeout=TIMEOUT
             )
-            # Get the returned text
-            raw_out = response.choices[0].text.strip()  
-            out = raw_out.lower()
-            # More rigorous checking logic
-            if "malicious" in out:
-                label = True
-                status_text = "AI:Malicious"
-            elif "safe" in out:
-                label = False
-                status_text = "AI:Safe"
-            else:
-                # In case the model returns garbage or incorrect format
-                # Default is Malicious (Fail-safe) or False depending on strategy
-                label = True
-                status_text = f"AI:Unknown({raw_out})"
-            return {
-                "file": filename,
-                "malicious": label,
-                "latency": time.time() - t0, 
-                "status": status_text 
-            }
-        except Exception as e: 
-            # print(f"Error: {e}") # Turn on if you want to debug 
-            time.sleep(BACKOFF[r]) 
-            
-    return { 
-        "file": filename, 
-        "malicious": True, # Timeout -> treated as Malicious 
-        "latency": time.time() - t0, 
-        "status": "TIMEOUT" 
-    }
+            lines = res.choices[0].text.splitlines()
+            out = []
+            for i in range(len(masked_logs)):
+                t = lines[i].lower() if i < len(lines) else ""
+                if "malicious" in t:
+                    out.append("malicious")
+                elif "safe" in t:
+                    out.append("safe")
+                else:
+                    out.append("suspicious")
+            return out
+        except:
+            time.sleep(0.3)
+
+    return ["suspicious"] * len(masked_logs)
 
 # ===============================
-# CHART & MAIN
+# FEEDER
 # ===============================
-def initial_chart(): 
-    plt.ion() 
-    fig, (ax1, ax2) = plt.subplots(1,2, figsize=(12,4)) 
-    fig.canvas.manager.set_window_title("📊 ENGINE v8-FINAL (Fixed) – Realtime Stats") 
-    return fig, ax1, ax2
 
-def update_chart(fig, ax1, ax2, lat_list, safe, mal): 
-    ax1.clear() 
-    ax2.clear() 
-    if len(lat_list) > 1: 
-        ax1.plot(lat_list[-200:], color="blue") 
-        ax1.set_ylim(bottom=0) 
-        ax1.set_title(f"Latency avg={sum(lat_list)/len(lat_list):.3f}s") 
+def log_feeder(q, stop):
+    offsets = {}
+    print("📡 Log feeder started")
 
-    total = safe + mal 
-    if total > 0: 
-        ax2.pie([safe, mal], labels=["Safe","Malicious"], 
-            autopct="%1.1f%%", colors=["#4CAF50","#F44336"]) 
+    while not stop.is_set():
+        for fp in glob.glob(f"{LOG_FOLDER}/*.log") + glob.glob(f"{LOG_FOLDER}/*.txt"):
+            try:
+                size = os.path.getsize(fp)
+                last = offsets.get(fp, 0)
+                if size <= last:
+                    continue
 
-    fig.tight_layout() 
-    fig.canvas.draw() 
-    fig.canvas.flush_events() 
-    plt.pause(0.001)
+                with open(fp, "r", errors="ignore") as f:
+                    f.seek(last)
+                    data = f.read()
+                    offsets[fp] = size
 
-def run_engine(): 
-    files = sorted(glob.glob(f"{LOG_FOLDER}/*.txt") + glob.glob(f"{LOG_FOLDER}/*.log")) 
-    total = min(len(files), MAX_FILES) 
-    print(f"📂 Found {total} files (ENGINE v8-FIXED)") 
+                for r in parse_requests(data):
+                    q.put(r, timeout=1)
+            except:
+                pass
 
-    fig,ax1, ax2 = initial_chart() 
-    lat = [] 
-    safe = 0 
-    mal = 0 
-    t0 = time.time() 
+        time.sleep(SCAN_INTERVAL)
 
-    with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool: 
-        futures = {} 
-        idx = 0 
-        file_iter = iter(files) 
+# ===============================
+# MAIN
+# ===============================
 
-        # Prefill threads 
-        while len(futures) < NUM_THREADS: 
-            try: 
-                fp = next(file_iter) 
-                # Read files 
-                content = open(fp, "r", errors="ignore").read() 
-                fut = pool.submit(ai_eval, os.path.basename(fp), content, idx) 
-                futures[fut] = fp 
-                idx += 1 
-            except StopIteration: 
-                break
+def run():
+    print("🚀 IDS LLM pipeline – FAST ONLY")
 
-        pbar = tqdm(total=total, desc="Scanning...") 
+    q = Queue(10000)
+    stop = threading.Event()
+    threading.Thread(target=log_feeder, args=(q, stop), daemon=True).start()
 
-        while futures: 
-            done = next((f for f in futures if f.done()), None) 
-            if not done: 
-                time.sleep(0.01) 
-            continue 
+    stats = {"safe": 0, "suspicious": 0, "malicious": 0}
+    lat = []
+    count = 0
+    t0 = time.time()
 
-            res = done.result() 
-            futures.pop(done) 
+    plt.ion()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    pbar = tqdm(unit="req")
 
-            if res["malicious"]: mal += 1 
-            else: safe += 1 
+    try:
+        while True:
+            batch = []
+            while len(batch) < BATCH_SIZE:
+                try:
+                    batch.append(q.get(timeout=0.5))
+                except Empty:
+                    break
 
-            lat.append(res["latency"]) 
+            if not batch:
+                time.sleep(0.2)
+                continue
 
-            if len(lat) % 20 == 0: 
-                update_chart(fig, ax1, ax2, lat, safe, mal) 
+            masked = [mask(x) for x in batch]
+            start = time.time()
+            res = scan_batch(masked)
 
-            pbar.update(1) 
+            for r in res:
+                stats[r] += 1
+                lat.append(time.time() - start)
+                count += 1
+                pbar.update(1)
 
-            try: 
-                fp = next(file_iter) 
-                content = open(fp, "r", errors="ignore").read() 
-                fut = pool.submit(ai_eval, os.path.basename(fp), content, idx) 
-                futures[fut] = fp 
-                idx += 1 
-            except StopIteration: 
-                pass 
+            if count % 50 == 0:
+                ax1.clear()
+                ax1.plot(lat[-100:])
+                ax1.set_title("Latency")
 
-        pbar.close() 
+                ax2.clear()
+                ax2.pie(
+                    stats.values(),
+                    labels=stats.keys(),
+                    autopct="%1.1f%%"
+                )
+                ax2.set_title(
+                    f"S:{stats['safe']} | Su:{stats['suspicious']} | M:{stats['malicious']}"
+                )
+                plt.pause(0.01)
 
-    t1 = time.time() 
-    print("\n===== SUMMARY (ENGINE v8-FIXED) =====") 
-    print(f"Total : {total}") 
-    print(f"Malicious : {mal}") 
-    print(f"Safe : {safe}") 
-    print(f"Time : {t1 - t0:.2f}s") 
-    if t1 - t0 > 0: 
-        print(f"Speed ​​: {total/(t1 - t0):.2f} files/s") 
+    except KeyboardInterrupt:
+        stop.set()
+        pbar.close()
 
-    plt.ioff() 
-    plt.show()
+    dur = time.time() - t0
+    print("\nProcessed:", count)
+    print("Throughput:", count / dur, "req/s")
 
-if __name__ == "__main__": 
-    run_engine()
+# ===============================
+if __name__ == "__main__":
+    run()
