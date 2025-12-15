@@ -1,3 +1,4 @@
+import shutil
 import os, time, random, json
 from pathlib import Path
 import requests
@@ -401,40 +402,75 @@ def split_requests_rfc(content):
 # WORKER THREAD
 # ==========================
 job_queue = Queue()
+incident_queue = Queue()
 
 def worker():
     while True:
-        raw_line = job_queue.get()
+        job = job_queue.get()
+        src_file=job["file"]
+        src_path=job["path"]
+        raw_line = job["request"]
 
         try:
+            # gt: ground truth label. pred: predicted label
             gt, req_text = extract_label_from_line(raw_line)
             risk = risk_score_advanced(req_text)
 
             HIGH, LOW = 12, 1
-
+            # If rish is very high, so we mark it as malicious directly and send incident alert
             if risk >= HIGH:
                 pred = "malicious"
                 latency = 0
+                incident_queue.put({
+                    "type": pred,
+                    "file": src_file,
+                    "path": src_path,
+                    "request": req_text,
+                    "timestamp": time.time()
+                })
             else:
                 pred, latency = analyze_log(req_text)
 
             # --- LOG UNKNOWN ---
+            # If the resutl is UNKNOWN, so we send incident alert and write to log about the case
             if pred == "unknown":
                 log_missed(UNK_PATH, gt, pred, req_text)
+                incident_queue.put({
+                    "type": pred,
+                    "file": src_file,
+                    "path": src_path,
+                    "request": req_text,
+                    "timestamp": time.time()
+                })
 
-            # --- LOG FALSE NEGATIVE (RẤT NGUY HIỂM) ---
+            # --- LOG FALSE NEGATIVE (VERY DANGER) ---
+            # If the resutl is malicious, so we send incident alert and write to log about the case
             if gt == "malicious" and pred == "safe":
                 log_missed(FN_PATH, gt, pred, req_text)
 
             # --- LOG FALSE POSITIVE ---
             if gt == "safe" and pred == "malicious":
                 log_missed(FP_PATH, gt, pred, req_text)
+                incident_queue.put({
+                    "type": pred,
+                    "file": src_file,
+                    "path": src_path,
+                    "request": req_text,
+                    "timestamp": time.time()
+                })
 
 
             # Update confusion matrix
             if gt == "malicious":
                 if pred == "malicious": eval_stats["TP"] += 1
                 else: eval_stats["FN"] += 1
+                incident_queue.put({
+                    "type": pred,
+                    "file": src_file,
+                    "path": src_path,
+                    "request": req_text,
+                    "timestamp": time.time()
+                })
 
             elif gt == "safe":
                 if pred == "safe": eval_stats["TN"] += 1
@@ -457,6 +493,37 @@ def worker():
 # Spawn workers
 for _ in range(WORKER_COUNT):
     threading.Thread(target=worker, daemon=True).start()
+    
+# ==========================
+# INCIDENT HANDLER
+# ==========================
+def incident_handler():
+    os.makedirs("malicious", exist_ok=True)
+    os.makedirs("unknown", exist_ok=True)
+
+    while True:
+        inc = incident_queue.get()
+
+        tag = inc["type"]
+        src = inc["path"]
+
+        # Log request + filename
+        incident_lock = threading.Lock()
+        with incident_lock:
+            with open(f"{tag}_requests.txt", "a", encoding="utf-8") as f:
+                f.write(
+                    f"[{time.ctime(inc['timestamp'])}] "
+                    f"FILE={inc['file']}\n"
+                    f"{inc['request']}\n\n"
+                )
+
+        # Copy source file (one time only)
+        dst = os.path.join(tag, os.path.basename(src))
+        if not os.path.exists(dst):
+            shutil.copy2(src, dst)
+
+        incident_queue.task_done()
+threading.Thread(target=incident_handler, daemon=True).start()
 
 
 # ==========================
@@ -535,6 +602,9 @@ threading.Thread(target=stats_pusher, daemon=True).start()
 # ==========================
 # MAIN SIMULATION
 # ==========================
+
+# Load logs and enqueue requests
+# We will simulate the speed at which log files are generated in real time.
 def start_simulation():
     files = sorted(Path(LOG_FOLDER).glob("*.txt"))
 
@@ -543,7 +613,12 @@ def start_simulation():
         reqs = split_requests_rfc(content)
 
         for req in reqs:
-            job_queue.put(req)
+            # We will take some infomation when scanning any request from the log file.
+            job_queue.put({
+                "file":file.name,
+                "path":str(file),
+                "request": req
+            })
 
         time.sleep(random.uniform(0.05, 0.2))
 
@@ -598,5 +673,3 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-
-    start_simulation()
