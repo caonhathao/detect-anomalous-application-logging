@@ -1,3 +1,9 @@
+tqdm
+streamlit
+torch
+transformers
+protobuf
+drain3
 matplotlib
 pandas
 regex
