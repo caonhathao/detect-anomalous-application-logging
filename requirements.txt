@@ -9,3 +9,5 @@ pandas
 regex
 python-dotenv
 openai
+google.generativeai 
+streamlit_autorefresh 
