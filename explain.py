@@ -2,7 +2,9 @@ import streamlit as st
 import os
 
 from src.explainer import LlmExplainer
-from streamlit_autorefresh import st_autorefresh  # pip install streamlit-autorefresh nếu chưa có
+from streamlit_autorefresh import (
+    st_autorefresh,
+)  # pip install streamlit-autorefresh nếu chưa có
 
 FOLDER = "D:/Projects/TTTN/detect-anomalous-application-logging/logs/malicious"
 
@@ -29,27 +31,23 @@ if not all_files:
 # 3. Tìm kiếm file theo keyword
 keyword = st.text_input("Tìm file (gõ một phần tên)")
 
-filtered_files = [
-    f for f in all_files
-    if keyword.lower() in f.lower()
-] if keyword else all_files
+filtered_files = (
+    [f for f in all_files if keyword.lower() in f.lower()] if keyword else all_files
+)
 
 if not filtered_files:
     st.warning("❌ Không tìm thấy file nào khớp với từ khóa.")
     st.stop()
 
 # 4. Chọn file & hiển thị nội dung
-selected_file = st.selectbox(
-    "Chọn file log",
-    filtered_files[:100]
-)
+selected_file = st.selectbox("Chọn file log", filtered_files[:100])
 
 st.write(f"Đang hiển thị nội dung của file: **{selected_file}**")
 
 content = ""
 if selected_file:
     file_path = os.path.join(FOLDER, selected_file)
-    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         content = f.read()
     st.text_area("Nội dung file log", content, height=400)
 
@@ -60,6 +58,6 @@ if st.button("Phân tích"):
         st.warning("File trống, không có gì để phân tích.")
     else:
         st.write("Đang phân tích...")
-        with st.spinner('Gemini đang đọc log và suy luận... vui lòng chờ...'):
+        with st.spinner("Gemini đang đọc log và suy luận... vui lòng chờ..."):
             explanation = llm.explain_anomaly(content)
             st.write(explanation)

@@ -1,66 +1,63 @@
 import os
 import re
 
-import os
-import re
 
-def split_log_file(input_path, output_folder, target_size_kb=5):
+def split_log_file(input_path, output_folder, max_requests_per_file=100):
     """
-    Tách file log lớn thành các file nhỏ dựa trên cấu trúc request đã gán nhãn dạng:
+    Tách file log lớn thành các file nhỏ.
+    Mỗi file chứa tối đa `max_requests_per_file` request,
+    dựa trên cấu trúc request đã gán nhãn:
         SAFE|
-        POST http...
+        POST ...
         headers...
-        
+
         MALICIOUS|
-        GET http...
+        GET ...
         headers...
     """
 
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    # Pattern nhận diện NHÃN (không phải request-line)
-    label_pattern = re.compile(r'^(SAFE|MALICIOUS)\|$', re.IGNORECASE)
+    # Pattern nhận diện dòng NHÃN
+    label_pattern = re.compile(r"^(SAFE|MALICIOUS)\|$", re.IGNORECASE)
 
     current_chunk_content = []
-    current_chunk_size = 0
+    current_request_count = 0
     file_count = 1
-    target_bytes = target_size_kb * 1024
 
     print("Đang xử lý...")
 
-    with open(input_path, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
         current_block = []
 
         for line in f:
-            # Nếu gặp dòng nhãn → bắt đầu request mới
+            # Nếu gặp nhãn → bắt đầu request mới
             if label_pattern.match(line.strip()):
-                # Nếu block cũ chưa ghi → thêm vào chunk
                 if current_block:
+                    # Hoàn tất 1 request
                     block_text = "".join(current_block)
-                    block_size = len(block_text.encode("utf-8"))
+                    current_chunk_content.append(block_text)
+                    current_request_count += 1
 
-                    # Nếu vượt ngưỡng → ghi file mới
-                    if current_chunk_size + block_size > target_bytes and current_chunk_size > 0:
+                    # Nếu đủ số request → ghi file
+                    if current_request_count >= max_requests_per_file:
                         _write_chunk(output_folder, file_count, current_chunk_content)
                         file_count += 1
                         current_chunk_content = []
-                        current_chunk_size = 0
-
-                    current_chunk_content.append(block_text)
-                    current_chunk_size += block_size
+                        current_request_count = 0
 
                     current_block = []
 
-            # Luôn thêm dòng vào block hiện tại
+            # Thêm dòng vào request hiện tại
             current_block.append(line)
 
-        # Block cuối
+        # Xử lý block cuối cùng
         if current_block:
-            block_text = "".join(current_block)
-            current_chunk_content.append(block_text)
+            current_chunk_content.append("".join(current_block))
+            current_request_count += 1
 
-        # Ghi chunk cuối
+        # Ghi file cuối nếu còn dữ liệu
         if current_chunk_content:
             _write_chunk(output_folder, file_count, current_chunk_content)
 
@@ -69,13 +66,13 @@ def split_log_file(input_path, output_folder, target_size_kb=5):
 
 def _write_chunk(folder, count, content_list):
     filename = os.path.join(folder, f"log_part_{count:04d}.txt")
-    with open(filename, 'w', encoding='utf-8') as out:
+    with open(filename, "w", encoding="utf-8") as out:
         out.write("".join(content_list))
 
 
 # --- CONFIG ---
 if __name__ == "__main__":
-    FILE_LOG_GOC = "merged_output.txt"  # file đã merge + gán nhãn
+    FILE_LOG_GOC = "merged_output.txt"  # file log lớn đã gán nhãn
     THU_MUC_OUT = "csic_2010_test"
 
-    split_log_file(FILE_LOG_GOC, THU_MUC_OUT, target_size_kb=6)
+    split_log_file(FILE_LOG_GOC, THU_MUC_OUT, max_requests_per_file=100)

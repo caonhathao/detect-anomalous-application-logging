@@ -439,7 +439,7 @@ def split_requests_rfc(content, filename):
 # ==========================
 # WORKER THREAD
 # ==========================
-job_queue = Queue()
+job_queue = Queue(maxsize=500)
 incident_queue = Queue()
 
 
@@ -660,7 +660,7 @@ def calc_throughput():
 
 
 # ================================
-# UNKNOWN SCAN (NOT USED)
+# UNKNOWN SCAN
 # ================================
 # using LogBertAnalyzer from src/detector.py
 VOCAB_SIZE = 3551
@@ -909,6 +909,8 @@ def start_simulation():
     files = sorted(Path(LOG_FOLDER).glob("*.txt"))
 
     for file in files:
+        print(f"📄 Processing file: {file.name}")
+
         content = file.read_text(errors="ignore")
         reqs = split_requests_rfc(content, file.name)
 
