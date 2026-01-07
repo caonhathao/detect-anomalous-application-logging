@@ -434,7 +434,7 @@ def split_requests_rfc(content, filename):
 # ==========================
 # WORKER THREAD
 # ==========================
-job_queue = Queue()
+job_queue = Queue(maxsize=500)
 incident_queue = Queue()
 
 
@@ -632,7 +632,7 @@ def calc_throughput():
 
 
 # ================================
-# UNKNOWN SCAN (NOT USED)
+# UNKNOWN SCAN
 # ================================
 # using LogBertAnalyzer from src/detector.py
 VOCAB_SIZE = 101
@@ -849,14 +849,26 @@ def start_simulation():
     files = sorted(Path(LOG_FOLDER).glob("*.txt"))
 
     for file in files:
+        print(f"📄 Processing file: {file.name}")
+
         content = file.read_text(errors="ignore")
         reqs = split_requests_rfc(content, file.name)
 
+        # Enqueue từng request (có backpressure)
         for req in reqs:
-            # We will take some infomation when scanning any request from the log file.
-            job_queue.put({"file": file.name, "path": str(file), "request": req})
+            job_queue.put(
+                {
+                    "file": file.name,
+                    "path": str(file),
+                    "request": req,
+                }
+            )  # ⬅️ sẽ block nếu queue đầy
 
-        time.sleep(random.uniform(0.05, 0.2))
+        # ⏳ CHỜ worker xử lý xong toàn bộ request của file này
+        job_queue.join()
+
+        # ⏱ Giả lập delay giữa các file log
+        time.sleep(random.uniform(0.5, 1))
 
 
 # ==========================
