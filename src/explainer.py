@@ -1,7 +1,6 @@
 import os
 import google.generativeai as genai
 from dotenv import load_dotenv
-from google.generativeai import client
 
 load_dotenv()
 
@@ -38,14 +37,13 @@ class LlmExplainer:
                 {context_str}
                 ---------------------
 
-                Yêu cầu phân tích:
-                1. Giải thích ngắn gọn tại sao dòng này đáng ngờ trong ngữ cảnh trên?
-                2. Dự đoán nguyên nhân gốc rễ (Root Cause).
-                3. Đưa ra 1 giải pháp khắc phục ngay lập tức.
-                4. Phân tích các lỗi bất thng ường khác (nếu có) trong ngữ cảnh trên.
-                5. Đưa ra các khuyến nghị để ngăn chặn sự cố tương tự trong tương lai.
-                
-                Trả lời bằng tiếng Việt.
+                Yêu cầu trả lời ngắn gọn bằng tiếng Việt (Markdown):
+                1. **Loại tấn công:** (SQLi, XSS, RCE...)
+                2. **Phân tích Payload:** (Giải mã nếu cần và giải thích hành vi)
+                3. **Mức độ:** (Thấp/TB/Cao)
+                4. **Giải pháp:**
+                    - Ngay lập tức: (Gợi ý chặn IP hoặc WAF Rule)
+                    - Tận gốc: (Cách sửa code)
                 """
 
     def explain_anomaly(self, context_str):

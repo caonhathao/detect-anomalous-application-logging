@@ -5,14 +5,14 @@ MODEL_PATH = "models/saved_bert/logbert_trained.pth"
 
 
 class LogBertAnalyzer:
-    def __init__(self, vocab_size, max_len=10):
+    def __init__(self, vocab_size, max_len=5):
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.device = torch.device("cpu")
 
         self.mask_token_id = vocab_size
 
-        # 1. Khởi tạo cấu trúc LogBERT (Tiny BERT cho nhẹ)
+        # 1. Khởi tạo cấu trúc LogBERT
         config = BertConfig(
             vocab_size=vocab_size + 10,
             hidden_size=128,
@@ -29,23 +29,26 @@ class LogBertAnalyzer:
         labels = []
         indices = []
 
+        pad_token_id = self.vocab_size + 1
         # Tạo cửa sổ trượt
-        if len(event_ids) < self.max_len:
+        if len(event_ids) < 1: 
             return [], [], []
-
-        for i in range(len(event_ids) - self.max_len):
-            # Input: sequence độ dài max_len
-            seq = event_ids[i: i + self.max_len]
-            # Label: chính là token tiếp theo (để kiểm tra xem model đoán đúng ko)
-            next_token = event_ids[i + self.max_len]
-
-            sequences.append(seq)
-            labels.append(next_token)
-            indices.append(i + self.max_len)  # Index của dòng log mục tiêu
+        
+        for i in range(len(event_ids)):
+            label = event_ids[i]
+            context = event_ids[max(0, i - self.max_len) : i]
+            
+            if len(context) < self.max_len:
+                padding_len = self.max_len - len(context)
+                context = [pad_token_id] * padding_len + context
+            
+            sequences.append(context)
+            labels.append(label)
+            indices.append(i)
 
         return sequences, labels, indices
 
-    def detect_anomalies(self, event_ids, top_k=5):
+    def detect_anomalies(self, event_ids, top_k=20, confidence_threshold=0.0):
         sequences, labels, line_indices = self.prepare_sequences(event_ids)
         if not sequences:
             return {
@@ -77,12 +80,13 @@ class LogBertAnalyzer:
 
         # Kiểm tra: Nếu token thực tế (labels) KHÔNG nằm trong top K dự đoán -> Bất thường
         for idx, (real_token, pred_tokens) in enumerate(zip(labels, top_preds)):
-            if real_token not in pred_tokens.tolist():
-                anomalies.append({
-                    "LineId": line_indices[idx] + 1,
-                    "EventId": real_token,
-                    "Confidence": probs[idx, real_token].item()
-                })
+                current_prob = probs[idx, real_token].item()
+                if (real_token not in pred_tokens.tolist()) or (current_prob < confidence_threshold):
+                    anomalies.append({
+                        "LineId": line_indices[idx] + 1,
+                        "EventId": real_token,
+                        "Confidence": current_prob
+                    })
 
         return {
             "total_logs": len(event_ids),

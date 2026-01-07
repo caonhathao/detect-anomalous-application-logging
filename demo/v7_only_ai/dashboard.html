@@ -1,10 +1,13 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Real-Time Log Analysis Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * { box-sizing: border-box; }
+        * {
+            box-sizing: border-box;
+        }
 
         body {
             font-family: Arial, sans-serif;
@@ -14,11 +17,18 @@
             padding: 20px;
         }
 
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 { margin-top: 0; }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            margin-top: 0;
+        }
 
         .metrics-card {
             margin-bottom: 20px;
+            margin-top: 20px;
             padding: 10px 16px;
             background: #222;
             border-radius: 8px;
@@ -65,198 +75,504 @@
         }
 
         @media (max-width: 768px) {
-            .metrics-card table { font-size: 14px; }
+            .metrics-card table {
+                font-size: 14px;
+            }
+        }
+
+        .table-scroll-wrapper {
+            max-height: 400px;
+            /* Giới hạn chiều cao */
+            overflow-y: auto;
+            /* Scroll dọc */
+            display: block;
+        }
+
+        /* Tùy chỉnh thanh cuộn cho đẹp */
+        .table-scroll-wrapper::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .table-scroll-wrapper::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+
+        .table-scroll-wrapper::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+
+        .table-scroll-wrapper::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        #logTable {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 8px;
+        }
+
+        #logTable th {
+            position: sticky;
+            top: 0;
+            background: #222;
+            z-index: 10;
+            text-align: left;
+            padding: 10px;
+            color: #888;
+            border-bottom: 1px solid #444;
+        }
+
+        #logTable td {
+            padding: 12px;
+            background: #1a1a1a;
+            border-top: 1px solid #333;
+            border-bottom: 1px solid #333;
+            vertical-align: middle;
+        }
+
+        /* Cột Log Content */
+        .log-content-cell {
+            font-family: 'Consolas', monospace;
+            font-size: 0.85rem;
+            color: #ccc;
+
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 500px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        /* --- THÊM CSS MỚI: Hiệu ứng Hover --- */
+        .log-content-cell:hover {
+            white-space: pre-wrap;
+            word-break: break-all;
+            background-color: #2a2a2a;
+            position: relative;
+            z-index: 100;
+        }
+
+        /* 4. STYLE CHO TAG / BADGE */
+        .badge-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+        }
+
+        .badge {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+            display: inline-block;
+        }
+
+        /* Tag Unknown (Vàng nhạt, chữ vàng) */
+        .badge.unknown {
+            background-color: rgba(255, 235, 59, 0.15);
+            color: #fdd835;
+            border: 1px solid rgba(255, 235, 59, 0.3);
+            box-shadow: 0 0 5px rgba(255, 235, 59, 0.1);
+        }
+
+        /* Tag Safe (Xanh lá nhạt, chữ xanh) */
+        .badge.safe {
+            background-color: rgba(76, 175, 80, 0.15);
+            color: #66bb6a;
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            box-shadow: 0 0 5px rgba(76, 175, 80, 0.1);
+        }
+
+        /* Tag Malicious (Đỏ nhạt, chữ đỏ) */
+        .badge.malicious {
+            background-color: rgba(244, 67, 54, 0.15);
+            color: #ef5350;
+            border: 1px solid rgba(244, 67, 54, 0.3);
+            box-shadow: 0 0 5px rgba(244, 67, 54, 0.1);
+        }
+
+        /* Mũi tên chuyển đổi */
+        .arrow-icon {
+            color: #666;
+            font-size: 1.2rem;
+            font-weight: bold;
         }
     </style>
 </head>
 
 <body>
-<div class="container">
-    <h1>⚡ Real-Time Log Analysis Dashboard</h1>
-    <p>(Tự cập nhật mỗi 5 giây)</p>
+    <div class="container">
+        <h1>Real-Time Log Analysis Dashboard</h1>
+        <p>(Tự cập nhật)</p>
 
-    <!-- METRIC SUMMARY L1 -->
-    <div class="metrics-card">
-        <h2>📊 Evaluation Metrics — L1 (Request Level)</h2>
-        <table>
-            <tr>
-                <td>Precision:</td><td id="precision">0</td>
-                <td>Recall:</td><td id="recall">0</td>
-                <td>F1-score:</td><td id="f1">0</td>
-            </tr>
-            <tr>
-                <td>TP:</td><td id="tp">0</td>
-                <td>FP:</td><td id="fp">0</td>
-                <td>TN:</td><td id="tn">0</td>
-                <td>FN:</td><td id="fn">0</td>
-            </tr>
-            <tr>
-                <td>RPS:</td><td id="rps">0</td>
-                <td>TPS:</td><td id="tps">0</td>
-                <td>Avg Latency (ms):</td><td id="avg_latency">0</td>
-            </tr>
-        </table>
-    </div>
-
-    <!-- METRIC SUMMARY L2 -->
-    <div class="metrics-card">
-        <h2>📁 Evaluation Metrics — L2 (File Level)</h2>
-        <table>
-            <tr>
-                <td>Precision:</td><td id="l2_precision">0</td>
-                <td>Recall:</td><td id="l2_recall">0</td>
-                <td>F1-score:</td><td id="l2_f1">0</td>
-            </tr>
-            <tr>
-                <td>TP:</td><td id="l2_tp">0</td>
-                <td>FP:</td><td id="l2_fp">0</td>
-                <td>TN:</td><td id="l2_tn">0</td>
-                <td>FN:</td><td id="l2_fn">0</td>
-            </tr>
-        </table>
-    </div>
-
-    <div class="charts-row">
-        <div class="chart-card">
-            <h3>⏱ Avg Latency</h3>
-            <div class="chart-wrapper"><canvas id="latencyChart"></canvas></div>
+        <div class="metrics-card">
+            <h2>Evaluation Metrics — L1 (Request Level)</h2>
+            <table>
+                <tr>
+                    <td>Precision:</td>
+                    <td id="precision">0</td>
+                    <td>Recall:</td>
+                    <td id="recall">0</td>
+                    <td>F1-score:</td>
+                    <td id="f1">0</td>
+                </tr>
+                <tr>
+                    <td>TP:</td>
+                    <td id="tp">0</td>
+                    <td>FP:</td>
+                    <td id="fp">0</td>
+                    <td>TN:</td>
+                    <td id="tn">0</td>
+                    <td>FN:</td>
+                    <td id="fn">0</td>
+                </tr>
+                <tr>
+                    <td>RPS:</td>
+                    <td id="rps">0</td>
+                    <td>TPS:</td>
+                    <td id="tps">0</td>
+                    <td>Avg Latency (ms):</td>
+                    <td id="avg_latency">0</td>
+                </tr>
+            </table>
         </div>
 
-        <div class="chart-card">
-            <h3>📂 Safe / Malicious / Unknown</h3>
-            <div class="chart-wrapper"><canvas id="ratioChart"></canvas></div>
+        <div class="charts-row">
+            <div class="chart-card">
+                <h3>Avg Latency</h3>
+                <div class="chart-wrapper"><canvas id="latencyChart"></canvas></div>
+            </div>
+
+            <div class="chart-card">
+                <h3>Safe / Malicious / Unknown</h3>
+                <div class="chart-wrapper"><canvas id="ratioChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="full-width-chart">
+            <h3>Throughput (RPS / TPS)</h3>
+            <div class="chart-wrapper"><canvas id="throughputChart"></canvas></div>
+        </div>
+
+        <div class="metrics-card">
+            <h2>LogBERT Resolution History</h2>
+            <table>
+                <tr>
+                    <td>Precision:</td>
+                    <td id="l2_precision">0</td>
+                    <td>Recall:</td>
+                    <td id="l2_recall">0</td>
+                    <td>F1-score:</td>
+                    <td id="l2_f1">0</td>
+                </tr>
+                <tr>
+                    <td>TP:</td>
+                    <td id="l2_tp">0</td>
+                    <td>FP:</td>
+                    <td id="l2_fp">0</td>
+                    <td>TN:</td>
+                    <td id="l2_tn">0</td>
+                    <td>FN:</td>
+                    <td id="l2_fn">0</td>
+                </tr>
+            </table>
+            <div class="table-scroll-wrapper">
+                <table id="logTable">
+                    <thead>
+                        <tr>
+                            <th width="12%">Time</th>
+                            <th width="63%">Log Content Snippet</th>
+                            <th width="25%">Analysis Flow</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logTableBody">
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 
-    <div class="full-width-chart">
-        <h3>🚀 Throughput (RPS / TPS)</h3>
-        <div class="chart-wrapper"><canvas id="throughputChart"></canvas></div>
+    <div id="analysisModal"
+        style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000;">
+        <div
+            style="background:#222; width:80%; max-width:800px; margin:50px auto; padding:20px; border-radius:8px; border:1px solid #444; color:#eee; max-height:90vh; overflow-y:auto;">
+            <div
+                style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #444; padding-bottom:10px;">
+                <h2 style="margin:0; color:#4caf50;">Gemini AI Analysis</h2>
+                <button onclick="closeModal()"
+                    style="background:none; border:none; color:#aaa; font-size:24px; cursor:pointer;">&times;</button>
+            </div>
+
+            <div id="modalContent" style="white-space: pre-wrap; line-height: 1.6; font-family: sans-serif;">
+            </div>
+        </div>
     </div>
-</div>
 
-
-<script>
-/* ------------------ COMMON OPTIONS ------------------ */
-const MAX_VISIBLE_TICKS = 200;
-const commonLineOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {
-        x: {
-            ticks: {
-                callback: function(value, index) {
-                    const total = this.chart.data.labels.length;
-                    if (total <= MAX_VISIBLE_TICKS) return value;
-                    const step = Math.ceil(total / MAX_VISIBLE_TICKS);
-                    return index % step === 0 ? value : "";
+    <script>
+        /* ------------------ COMMON OPTIONS ------------------ */
+        const MAX_VISIBLE_TICKS = 200;
+        const commonLineOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            scales: {
+                x: {
+                    ticks: {
+                        callback: function (value, index)
+                        {
+                            const total = this.chart.data.labels.length;
+                            if (total <= MAX_VISIBLE_TICKS) return value;
+                            const step = Math.ceil(total / MAX_VISIBLE_TICKS);
+                            return index % step === 0 ? value : "";
+                        },
+                        color: "#eee"
+                    },
+                    grid: { color: "#444" }
                 },
-                color: "#eee"
+                y: {
+                    beginAtZero: true,
+                    grid: { color: "#333" },
+                    ticks: { color: "#eee" }
+                }
             },
-            grid: { color: "#444" }
-        },
-        y: {
-            beginAtZero: true,
-            grid: { color: "#333" },
-            ticks: { color: "#eee" }
+            plugins: {
+                legend: { labels: { color: "#eee" } }
+            }
+        };
+
+        /* ------------------ CHARTS ------------------ */
+        let latencyChart = new Chart(document.getElementById("latencyChart"), {
+            type: "line",
+            data: { labels: [], datasets: [{ label: "Avg Latency (ms)", data: [], borderColor: "cyan", tension: 0.3 }] },
+            options: commonLineOptions
+        });
+
+        let ratioChart = new Chart(document.getElementById("ratioChart"), {
+            type: "bar",
+            data: { labels: ["Safe", "Malicious", "Unknown"], datasets: [{ label: "Count", data: [0, 0, 0], backgroundColor: ["green", "red", "yellow"] }] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { color: "#eee" }, grid: { display: false } },
+                    y: { beginAtZero: true, grid: { color: "#333" }, ticks: { color: "#aaa" } }
+                },
+                plugins: { legend: { labels: { color: "#eee" } } }
+            }
+        });
+
+        let throughputChart = new Chart(document.getElementById("throughputChart"), {
+            type: "line",
+            data: {
+                labels: [],
+                datasets: [
+                    { label: "RPS", data: [], borderColor: "orange", tension: 0.3 },
+                    { label: "TPS", data: [], borderColor: "lightgreen", tension: 0.3 }
+                ]
+            },
+            options: commonLineOptions
+        });
+
+        const MAX_POINTS = 2000;
+
+        /* ------------------ WEBSOCKET ------------------ */
+        let ws = new WebSocket("ws://localhost:8765");
+
+        const processedLogKeys = new Set();
+        function escapeHtml(text)
+        {
+            if (!text) return "";
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
         }
-    },
-    plugins: {
-        legend: { labels: { color: "#eee" } }
-    }
-};
 
-/* ------------------ CHARTS ------------------ */
-let latencyChart = new Chart(document.getElementById("latencyChart"), {
-    type: "line",
-    data: { labels: [], datasets: [{ label: "Avg Latency (ms)", data: [], borderColor: "cyan", tension: 0.3 }] },
-    options: commonLineOptions
-});
+        function getLogKey(log)
+        {
+            return `${log.time}_${log.file}_${log.content.substring(0, 30)}`;
+        }
 
-let ratioChart = new Chart(document.getElementById("ratioChart"), {
-    type: "bar",
-    data: { labels: ["Safe","Malicious","Unknown"], datasets: [{ label:"Count", data:[0,0,0], backgroundColor:["green","red","yellow"] }] },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-            x: { ticks:{color:"#eee"}, grid:{display:false} },
-            y: { beginAtZero:true, grid:{color:"#333"}, ticks:{color:"#eee"} }
-        },
-        plugins: { legend:{ labels:{color:"#eee"} } }
-    }
-});
+        // --- NEW FUNCTIONS FOR GEMINI ---
+        function analyzeLog(content)
+        {
+            document.getElementById("analysisModal").style.display = "block";
+            document.getElementById("modalContent").innerHTML = "<p style='color:cyan;'>Gemini đang đọc log và suy luận... Vui lòng chờ...</p>";
 
-let throughputChart = new Chart(document.getElementById("throughputChart"), {
-    type: "line",
-    data: {
-        labels: [],
-        datasets: [
-            { label: "RPS", data: [], borderColor: "orange", tension:0.3 },
-            { label: "TPS", data: [], borderColor: "lightgreen", tension:0.3 }
-        ]
-    },
-    options: commonLineOptions
-});
+            // Gửi qua WebSocket
+            ws.send(JSON.stringify({
+                action: "analyze_log",
+                content: content
+            }));
+        }
 
-const MAX_POINTS = 2000;
+        function closeModal()
+        {
+            document.getElementById("analysisModal").style.display = "none";
+        }
 
-/* ------------------ WEBSOCKET ------------------ */
-let ws = new WebSocket("ws://localhost:8765");
+        // Đóng modal khi click ra ngoài
+        window.onclick = function (event)
+        {
+            let modal = document.getElementById("analysisModal");
+            if (event.target == modal)
+            {
+                closeModal();
+            }
+        }
+        // -------------------------------
 
-ws.onmessage = (event) => {
-    let data = JSON.parse(event.data);
+        ws.onmessage = (event) =>
+        {
+            let data = JSON.parse(event.data);
 
-    /* ---- Update Latency Chart ---- */
-    latencyChart.data.labels.push(data.total);
-    latencyChart.data.datasets[0].data.push(data.avg_latency * 1000);
+            // --- XỬ LÝ KẾT QUẢ TỪ GEMINI ---
+            if (data.type === "analysis_result")
+            {
+                if (data.status === "processing")
+                {
+                    // Có thể update UI modal nếu muốn
+                } else if (data.status === "done")
+                {
+                    let formattedResult = data.result
+                        .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") // Bold
+                        .replace(/\n/g, "<br>"); // Xuống dòng
 
-    if (latencyChart.data.labels.length > MAX_POINTS) {
-        latencyChart.data.labels.shift();
-        latencyChart.data.datasets[0].data.shift();
-    }
-    latencyChart.update();
+                    document.getElementById("modalContent").innerHTML = formattedResult;
+                }
+                return; // Dừng, không chạy logic update chart
+            }
+            // -------------------------------
 
-    /* ---- Update Ratio Chart ---- */
-    ratioChart.data.datasets[0].data = [data.safe, data.malicious, data.unknown];
-    ratioChart.update();
+            /* ---- Update Latency Chart ---- */
+            latencyChart.data.labels.push(data.total);
+            latencyChart.data.datasets[0].data.push(data.avg_latency * 1000);
 
-    /* ---- Update Throughput Chart ---- */
-    throughputChart.data.labels.push(data.total);
-    throughputChart.data.datasets[0].data.push(data.rps);
-    throughputChart.data.datasets[1].data.push(data.tps);
+            if (latencyChart.data.labels.length > MAX_POINTS)
+            {
+                latencyChart.data.labels.shift();
+                latencyChart.data.datasets[0].data.shift();
+            }
+            latencyChart.update('none');
 
-    if (throughputChart.data.labels.length > MAX_POINTS) {
-        throughputChart.data.labels.shift();
-        throughputChart.data.datasets[0].data.shift();
-        throughputChart.data.datasets[1].data.shift();
-    }
-    throughputChart.update();
+            /* ---- Update Ratio Chart ---- */
+            ratioChart.data.datasets[0].data = [data.safe, data.malicious, data.unknown];
+            ratioChart.update();
 
-    /* ---- Update L1 SUMMARY ---- */
-    document.getElementById("precision").innerText = data.l1_precision.toFixed(4);
-    document.getElementById("recall").innerText    = data.l1_recall.toFixed(4);
-    document.getElementById("f1").innerText        = data.l1_f1.toFixed(4);
+            /* ---- Update Throughput Chart ---- */
+            throughputChart.data.labels.push(data.total);
+            throughputChart.data.datasets[0].data.push(data.rps);
+            throughputChart.data.datasets[1].data.push(data.tps);
 
-    document.getElementById("tp").innerText = data.l1_TP;
-    document.getElementById("fp").innerText = data.l1_FP;
-    document.getElementById("tn").innerText = data.l1_TN;
-    document.getElementById("fn").innerText = data.l1_FN;
+            if (throughputChart.data.labels.length > MAX_POINTS)
+            {
+                throughputChart.data.labels.shift();
+                throughputChart.data.datasets[0].data.shift();
+                throughputChart.data.datasets[1].data.shift();
+            }
+            throughputChart.update();
 
-    document.getElementById("rps").innerText = data.rps.toFixed(2);
-    document.getElementById("tps").innerText = data.tps.toFixed(2);
-    document.getElementById("avg_latency").innerText = (data.avg_latency * 1000).toFixed(2);
+            /* ---- Update L1 SUMMARY ---- */
+            document.getElementById("precision").innerText = data.l1_precision.toFixed(4);
+            document.getElementById("recall").innerText = data.l1_recall.toFixed(4);
+            document.getElementById("f1").innerText = data.l1_f1.toFixed(4);
 
-    /* ---- Update L2 SUMMARY ---- */
-    document.getElementById("l2_precision").innerText = data.l2_precision.toFixed(4);
-    document.getElementById("l2_recall").innerText    = data.l2_recall.toFixed(4);
-    document.getElementById("l2_f1").innerText        = data.l2_f1.toFixed(4);
+            document.getElementById("tp").innerText = data.l1_TP;
+            document.getElementById("fp").innerText = data.l1_FP;
+            document.getElementById("tn").innerText = data.l1_TN;
+            document.getElementById("fn").innerText = data.l1_FN;
 
-    document.getElementById("l2_tp").innerText = data.l2_TP;
-    document.getElementById("l2_fp").innerText = data.l2_FP;
-    document.getElementById("l2_tn").innerText = data.l2_TN;
-    document.getElementById("l2_fn").innerText = data.l2_FN;
-};
-</script>
+            document.getElementById("rps").innerText = data.rps.toFixed(2);
+            document.getElementById("tps").innerText = data.tps.toFixed(2);
+            document.getElementById("avg_latency").innerText = (data.avg_latency * 1000).toFixed(2);
+
+            if (data.l2_precision !== undefined)
+            {
+                document.getElementById("l2_precision").innerText = data.l2_precision.toFixed(4);
+                document.getElementById("l2_recall").innerText = data.l2_recall.toFixed(4);
+                document.getElementById("l2_f1").innerText = data.l2_f1.toFixed(4);
+
+                document.getElementById("l2_tp").innerText = data.l2_TP;
+                document.getElementById("l2_fp").innerText = data.l2_FP;
+                document.getElementById("l2_tn").innerText = data.l2_TN;
+                document.getElementById("l2_fn").innerText = data.l2_FN;
+            }
+
+            /* ---- 3. TABLE*/
+            if (data.recent_logs && data.recent_logs.length > 0)
+            {
+                const tbody = document.getElementById("logTableBody");
+                const logsReversed = [...data.recent_logs].reverse();
+
+                logsReversed.forEach(log =>
+                {
+                    const uniqueKey = getLogKey(log);
+
+                    if (!processedLogKeys.has(uniqueKey))
+                    {
+                        processedLogKeys.add(uniqueKey);
+
+                        const tr = document.createElement("tr");
+
+                        let finalBadge = "";
+                        let scoreDisplay = "";
+
+                        // Định nghĩa nút Analyze
+                        let analyzeBtn = "";
+
+                        if (log.status === "malicious")
+                        {
+                            finalBadge = `<span class="badge malicious">MALICIOUS</span>`;
+                            scoreDisplay = `<div style="font-size:0.8em; color:#ef5350; margin-top:4px;">Confidence: ${log.score.toFixed(6)}</div>`;
+
+                            // Tạo nút Analyze, dùng data-content để tránh lỗi quote
+                            analyzeBtn = `<button 
+                                onclick="analyzeLog(this.getAttribute('data-content'))" 
+                                data-content="${escapeHtml(log.content)}"
+                                style="margin-top:5px; background:#2196F3; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.7em;"
+                            >Ask AI</button>`;
+                        } else
+                        {
+                            finalBadge = `<span class="badge safe">SAFE</span>`;
+                            scoreDisplay = `<div style="font-size:0.8em; color:#66bb6a; margin-top:4px;">Confidence: ${log.score.toFixed(6)}</div>`;
+                        }
+
+                        tr.innerHTML = `
+                            <td style="color:#888;">${log.time}</td>
+                            
+                            <td class="log-content-cell" title="Click or Hover to see full log">${escapeHtml(log.content)}</td>
+                            
+                            <td>
+                                <div class="badge-container">
+                                    <span class="badge unknown">UNKNOWN</span>
+                                    <span class="arrow-icon">➜</span>
+                                    <div style="display:flex; flex-direction:column; align-items:center;">
+                                        ${finalBadge}
+                                        ${scoreDisplay} 
+                                        ${analyzeBtn}
+                                    </div>
+                                </div>
+                            </td>
+                        `;
+                        tbody.prepend(tr);
+                    }
+                });
+
+                if (tbody.children.length > 1000)
+                {
+                    tbody.removeChild(tbody.lastChild);
+                }
+            }
+        };
+    </script>
 
 </body>
+
 </html>
