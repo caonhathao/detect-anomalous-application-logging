@@ -4,13 +4,13 @@ import os
 from src.explainer import LlmExplainer
 from streamlit_autorefresh import st_autorefresh  # pip install streamlit-autorefresh nếu chưa có
 
-FOLDER = "logs/malicious"
+FOLDER = "D:/Projects/TTTN/detect-anomalous-application-logging/logs/malicious"
 
-st.title("🔎 Xem & phân tích log unknown")
+st.title("Xem & phân tích log unknown")
 
 # 1. Tự động check xem folder đã tồn tại chưa
 if not os.path.exists(FOLDER):
-    st.info(f"⏳ Đang chờ thư mục log xuất hiện: `{FOLDER}`")
+    st.info(f"Đang chờ thư mục log xuất hiện: `{FOLDER}`")
 
     # Tự động reload sau mỗi 3 giây, không spam log
     st_autorefresh(interval=3000, key="wait_for_folder")
@@ -21,13 +21,13 @@ llm = LlmExplainer()
 all_files = os.listdir(FOLDER)
 
 if not all_files:
-    st.warning("📂 Thư mục đã tồn tại nhưng chưa có file log nào.")
+    st.warning("Thư mục đã tồn tại nhưng chưa có file log nào.")
     # Có thể auto-refresh tiếp để chờ file mới
     st_autorefresh(interval=3000, key="wait_for_files")
     st.stop()
 
 # 3. Tìm kiếm file theo keyword
-keyword = st.text_input("🔍 Tìm file (gõ một phần tên)")
+keyword = st.text_input("Tìm file (gõ một phần tên)")
 
 filtered_files = [
     f for f in all_files
@@ -54,7 +54,7 @@ if selected_file:
     st.text_area("Nội dung file log", content, height=400)
 
 # 5. Gọi LLM phân tích
-st.markdown("### 🤖 Gemini phân tích:")
+st.markdown("### Gemini phân tích:")
 if st.button("Phân tích"):
     if not content.strip():
         st.warning("File trống, không có gì để phân tích.")
