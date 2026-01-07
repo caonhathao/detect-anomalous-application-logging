@@ -10,17 +10,24 @@ def parsing_http_requests(file):
     for line in file:
         line = line.rstrip("\n")
 
+        if line.startswith("SAFE|") or line.startswith("MALICIOUS|"):
+            if req_lines:
+                yield " ".join(req_lines)
+                req_lines = []
+                content_len = None
+                body_read = 0
+            continue
+        
         if content_len is not None:
             req_lines.append(line)
             body_read += len(line.encode())
-
             if body_read >= content_len:
                 yield " ".join(req_lines)
                 req_lines = []
                 content_len = None
                 body_read = 0
             continue
-
+        
         if line == "":
             if not req_lines:
                 continue
@@ -45,7 +52,7 @@ def parsing_http_requests(file):
 
     if req_lines:
         full_log = " ".join(req_lines).strip()
-        if full_log:  # Chỉ yield nếu có nội dung
+        if full_log:
             yield " ".join(req_lines)
 
 def process_log_string(log_string):

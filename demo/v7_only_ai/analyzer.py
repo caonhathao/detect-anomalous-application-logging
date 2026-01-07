@@ -8,14 +8,16 @@ import websockets
 from queue import Queue
 from dotenv import load_dotenv
 import glob
-
-# === THÊM KHỐI NÀY VÀO ĐÂY ===
+from collections import deque
 import sys
 
-# Tính đường dẫn tới thư mục root (lùi 2 cấp từ demo/v7-only-ai)
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
+
+from src import LogBertAnalyzer, parsing_http_requests, process_log_string, LlmExplainer
+
+gemini_explainer = LlmExplainer()
 
 # ==== LOG DIRECTORIES (luôn tính từ ROOT) ====
 BASE_LOG_DIR = os.path.join(ROOT_DIR, "logs")
@@ -23,6 +25,7 @@ os.makedirs(BASE_LOG_DIR, exist_ok=True)
 
 # Folder chứa các file bị miss (FN, FP, unknown case)
 MISSED_DIR = os.path.join(BASE_LOG_DIR, "logs_missed")
+
 os.makedirs(MISSED_DIR, exist_ok=True)
 
 FN_PATH = os.path.join(MISSED_DIR, "false_negative.txt")
@@ -33,7 +36,6 @@ DEBUG_FOLDER = os.path.join(BASE_LOG_DIR, "debug_logs")
 os.makedirs(DEBUG_FOLDER, exist_ok=True)
 
 
-from src import LogBertAnalyzer, parsing_http_requests, process_log_string
 
 load_dotenv()
 
@@ -69,7 +71,7 @@ os.makedirs(MALICIOUS_FOLDER, exist_ok=True)
 os.makedirs(SAFE_FOLDER, exist_ok=True)
 
 
-UPDATE_CHART_EVERY = 200
+UPDATE_CHART_EVERY = 100
 WORKER_COUNT = 4  # số worker xử lý song song
 REQUEST_TIMEOUT = 8  # timeout khi gọi service
 
@@ -306,6 +308,9 @@ def risk_score_advanced(text):
     if low.startswith(("trace", "connect", "debug")):
         score += 10
 
+    if ".jsp/" in low:
+        score += 5
+    
     return score
 
 
@@ -444,6 +449,8 @@ def worker():
         src_file = job["file"]
         src_path = job["path"]
         raw_line = job["request"]
+        current_idx = job["index"]
+        all_req = job["all_request"]
 
         try:
             # Khởi tạo state nếu chưa có
@@ -457,7 +464,7 @@ def worker():
             # gt: ground truth label. pred: predicted label
             gt, req_text = extract_label_from_line(raw_line)
             risk = risk_score_advanced(req_text)
-
+            
             HIGH, LOW = 12, 1
             # If rish is very high, so we mark it as malicious directly and send incident alert
             if risk >= HIGH:
@@ -473,8 +480,23 @@ def worker():
             # --- LOG UNKNOWN ---
             # If the resutl is UNKNOWN, so we send incident alert and write to log about the case
             if pred == "unknown":
+                
                 log_missed(UNK_PATH, gt, pred, req_text)
                 stats_l1["unknown"] += 1
+                
+                start_idx = max(0, current_idx - 4)
+                context_win = all_req[start_idx:current_idx + 1]
+                
+                context_content = "\n".join(context_win)
+                snippet_filename = f"{src_file}_line{current_idx}.txt"
+                incident_queue.put({
+                    "type": "unknown",
+                    "file": snippet_filename,
+                    "path": src_path,
+                    "request": req_text,
+                    "timestamp": time.time(),
+                    "custom_content": context_content
+                })
 
             # --- LOG FALSE NEGATIVE (VERY DANGER) ---
             # If the resutl is malicious, so we send incident alert and write to log about the case
@@ -580,15 +602,21 @@ def incident_handler():
 
         dst = os.path.join(dst_dir, os.path.basename(src))
 
-        # Chỉ copy 1 lần nếu chưa có
-        if os.path.exists(src) and not os.path.exists(dst):
+        if "custom_content" in inc and inc["custom_content"]:
             try:
-                shutil.copy2(src, dst)
+                with open(dst, "w", encoding="utf-8") as f:
+                    f.write(inc["custom_content"])
             except Exception as e:
-                print(f"[incident_handler] Lỗi copy {src} -> {dst}: {e}")
-
+                print(f"[incident_handler] Lỗi ghi file context {dst}: {e}")
+        else:
+            src = inc["path"]
+            if os.path.exists(src) and not os.path.exists(dst):
+                try:
+                    shutil.copy2(src, dst)
+                except Exception as e:
+                    print(f"[incident_handler] Lỗi copy {src} -> {dst}: {e}")
+        
         incident_queue.task_done()
-
 
 threading.Thread(target=incident_handler, daemon=True).start()
 
@@ -635,8 +663,8 @@ def calc_throughput():
 # UNKNOWN SCAN (NOT USED)
 # ================================
 # using LogBertAnalyzer from src/detector.py
-VOCAB_SIZE = 101
-ANOMALY_THRESHOLD = 0
+VOCAB_SIZE = 3551
+ANOMALY_THRESHOLD = 3
 try:
     analyzer = LogBertAnalyzer(vocab_size=VOCAB_SIZE)
 except Exception as e:
@@ -645,79 +673,109 @@ except Exception as e:
 
 scored_files = set()
 
-
+resolved_history = deque(maxlen=20)
 def process_single_file(file_path, stats):
     if analyzer is None:
         return None
+    
+    if stats_l1["unknown"] > 0: 
+        stats_l1["unknown"] -= 1
 
+    fname = os.path.basename(file_path)
+    display_content = ""
     event_ids = []
+    
     try:
         with open(file_path, "r", errors="ignore") as f:
-            log_req = parsing_http_requests(f)
+            log_req = list(parsing_http_requests(f))
+
+            if log_req:
+                display_content = log_req[-1].strip() # Lấy request cuối cùng
+            else:
+                display_content = Path(file_path).read_text(encoding="utf-8", errors="ignore")
+
+            
             for log_string in log_req:
                 result = process_log_string(log_string)
                 e_id = result.get("EventId")
                 if e_id is not None:
                     event_ids.append(e_id)
     except Exception as e:
-        print(f"❌ Lỗi đọc file {file_path}: {e}")
+        print(f"Lỗi đọc file {file_path}: {e}")
         return None
 
     if not event_ids:
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"{file_path}: {e}")
-            pass
+        try: os.remove(file_path)
+        except: pass
         return None
-
+    
     try:
-        detection_result = analyzer.detect_anomalies(event_ids, top_k=5)
-        anomaly_count = detection_result.get("anomaly_count", 0)
-
-        is_anomalous = True if anomaly_count > ANOMALY_THRESHOLD else False
+        detection_result = analyzer.detect_anomalies(event_ids, confidence_threshold=0.05)
+        anomalies = detection_result.get("anomalies", [])
+        target_line_id = len(event_ids)
+        target_is_anomalous = False
+        confidence = 1.0
+        for a in anomalies:
+            if a["LineId"] == target_line_id:
+                target_is_anomalous = True
+                confidence = a["Confidence"]
+                break
+        is_anomalous = target_is_anomalous
+        final_verdict = ""
 
         fname = os.path.basename(file_path)
+        final_verdict = ""
         if is_anomalous:
+            final_verdict = "malicious"
             file_pred[fname] = "malicious"
-            # ===== FILE-LEVEL METRIC UPDATE =====
-            if fname in file_gt and fname not in scored_files:
-                scored_files.add(fname)
-                gt = file_gt.get(fname)
-                pred = file_pred.get(fname)
 
-                if gt == "malicious" and pred == "malicious":
-                    eval_stats_l2["TP"] += 1
-                elif gt == "malicious" and pred == "safe":
-                    eval_stats_l2["FN"] += 1
-                elif gt == "safe" and pred == "malicious":
-                    eval_stats_l2["FP"] += 1
-                elif gt == "safe" and pred == "safe":
-                    eval_stats_l2["TN"] += 1
-
-            # đổi tên file để đánh dấu đã check
-            # new_path = file_path + ".checked_anomaly"
-            # os.rename(file_path, new_path)
-            # move file sang logs/malicious
-            dst = os.path.join(MALICIOUS_FOLDER, os.path.basename(file_path))
-            try:
-                shutil.move(file_path, dst)
-            except Exception as e:
-                print(f"❌ Lỗi move file {file_path} -> {dst}: {e}")
-
+            stats_l1["malicious"] += 1
             stats["malicious"] += 1
-            # stats["unknown"] = len(os.listdir(UNKNOWN_FOLDER))
-            print(f"🚨 [LogBERT] Anomaly Detected: {os.path.basename(file_path)}")
+
+            dst = os.path.join(MALICIOUS_FOLDER, fname)
+            try: shutil.move(file_path, dst)
+            except: pass
+            print(f"[LogBERT] {fname} -> MALICIOUS")
         else:
+            final_verdict = "safe"
             file_pred[fname] = "safe"
-            # move file non-anomalous sang logs/safe (hoặc xóa nếu bạn muốn)
-            dst = os.path.join(SAFE_FOLDER, os.path.basename(file_path))
-            try:
-                shutil.move(file_path, dst)
-            except Exception as e:
-                print(f"❌ Lỗi move file {file_path} -> {dst}: {e}")
+            
+            # Tăng count Safe
+            stats_l1["safe"] += 1
             stats["safe"] += 1
-            # stats["unknown"] = len(os.listdir(UNKNOWN_FOLDER))
+
+            dst = os.path.join(SAFE_FOLDER, fname)
+            try: shutil.move(file_path, dst)
+            except: pass
+
+        try:
+            ground_truth = "safe"            
+            if fname in file_gt:
+                ground_truth = file_gt[fname]
+            else:
+                original_name = fname.split("_line")[0]
+                if original_name in file_gt:
+                    ground_truth = file_gt[original_name]
+                    
+            if ground_truth == "malicious" and final_verdict == "malicious":
+                eval_stats_l2["TP"] += 1
+            elif ground_truth == "safe" and final_verdict == "safe":
+                eval_stats_l2["TN"] += 1
+            elif ground_truth == "safe" and final_verdict == "malicious":
+                eval_stats_l2["FP"] += 1 # Báo nhầm
+            elif ground_truth == "malicious" and final_verdict == "safe":
+                eval_stats_l2["FN"] += 1 # Bỏ sót
+
+        except Exception as e:
+            print(f"Lỗi tính điểm L2: {e}")
+        
+        resolved_history.appendleft({
+            "time": time.strftime("%H:%M:%S"),
+            "file": fname,
+            "content": display_content,
+            "status": final_verdict,
+            "score": confidence
+        })
 
     except Exception as e:
         print(f"❌ Lỗi khi chạy model cho {file_path}: {e}")
@@ -727,7 +785,7 @@ def unknow_scan_batch(stop_event, stats):
     if not os.path.exists(UNKNOWN_FOLDER):
         os.makedirs(UNKNOWN_FOLDER)
 
-    print("🕵️  LogBERT Scanner started monitoring:", UNKNOWN_FOLDER)
+    print("LogBERT Scanner started monitoring:", UNKNOWN_FOLDER)
 
     while not stop_event.is_set():
         # 1. Lấy danh sách file mới nhất
@@ -806,10 +864,12 @@ async def push_stats():
             "total": stats_l1["total"],
             "safe": stats_l1["safe"],
             "malicious": stats_l1["malicious"],
-            "unknown": unknown,
+            "unknown": stats_l1["unknown"],
             "rps": rps,
             "tps": tps,
             "avg_latency": avg_lat,
+
+            "recent_logs": list(resolved_history)
         }
     )
 
@@ -852,10 +912,10 @@ def start_simulation():
         content = file.read_text(errors="ignore")
         reqs = split_requests_rfc(content, file.name)
 
-        for req in reqs:
+        for i,req in enumerate(reqs):
             # We will take some infomation when scanning any request from the log file.
-            job_queue.put({"file": file.name, "path": str(file), "request": req})
-
+            job_queue.put({"file": file.name, "path": str(file), "request": req, "index": i, "all_request": reqs })
+            time.sleep(random.uniform(0.01, 0.05))
         time.sleep(random.uniform(0.05, 0.2))
 
 
@@ -865,11 +925,36 @@ def start_simulation():
 async def ws_handler(websocket):
     ws_clients.add(websocket)
     try:
-        async for _ in websocket:
-            pass
+        async for message in websocket:
+            try:
+                data = json.loads(message)
+
+                if data.get("action") == "analyze_log":
+                    log_content = data.get("content")
+                    
+                    await websocket.send(json.dumps({
+                        "type": "analysis_result",
+                        "status": "processing"
+                    }))
+                    
+                    loop = asyncio.get_running_loop()
+                    explanation = await loop.run_in_executor(
+                        None, 
+                        gemini_explainer.explain_anomaly, 
+                        log_content
+                    )
+                    
+                    await websocket.send(json.dumps({
+                        "type": "analysis_result",
+                        "status": "done",
+                        "result": explanation
+                    }))
+                    
+            except Exception as e:
+                print(f"Lỗi xử lý message: {e}")
+                
     finally:
         ws_clients.remove(websocket)
-
 
 # async def websocket_main():
 #     async with websockets.serve(ws_handler, "0.0.0.0", 8765):
@@ -888,7 +973,7 @@ async def ws_handler(websocket):
 # ENTRY
 # ==========================
 async def main_async():
-
+    
     # Start websocket server
     server = await websockets.serve(ws_handler, "0.0.0.0", 8765)
 
