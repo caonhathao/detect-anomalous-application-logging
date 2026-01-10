@@ -90,6 +90,24 @@ Quick map of important scripts and their purpose:
 
 ---
 
+## Technologies used 🛠️
+
+This project uses the following technologies and libraries:
+
+- **Language & runtime:** Python 3.8+
+- **Deep learning / LLMs:** PyTorch, Hugging Face Transformers, Masked LM (BERT) models
+- **Detection model:** LogBERT-style masked-LM (custom weights in `models/saved_bert/`)
+- **Template mining / log parsing:** Drain3 (via `demo/drain3_instance.py`)
+- **LLM explainers / local LLMs:** `google.generativeai` (Gemini) and `llama_cpp` for local GGUF models
+- **Data processing & utilities:** pandas, regex, urllib, python-dotenv
+- **Web/UI:** Streamlit (legacy explainer UI)
+- **Networking & services:** requests, websockets
+- **Dev tooling:** tqdm, matplotlib for plotting and simple analysis
+
+> Note: I received your PDF attachment. If you'd like, I can extract chapters 3–5 and add a concise summary of your system design, data flow, and evaluation details into this README — say "Yes, add chapters 3–5" and I'll proceed.
+
+---
+
 ## Steps to prepare data, run tests & demos ▶️
 
 Follow these steps for a complete local flow (prepare data → train/test → demo):
