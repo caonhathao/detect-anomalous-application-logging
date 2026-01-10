@@ -559,7 +559,7 @@ def worker():
         job_queue.task_done()
 
 
-# Spawn workers
+# Chạy các workers (threads)
 for _ in range(WORKER_COUNT):
     threading.Thread(target=worker, daemon=True).start()
 
@@ -568,7 +568,7 @@ for _ in range(WORKER_COUNT):
 # ==========================
 incident_lock = threading.Lock()
 
-
+# phân loại kết quả sau khi phân tích
 def incident_handler():
     # dùng các folder đã định nghĩa ở trên
     for d in (MALICIOUS_FOLDER, UNKNOWN_FOLDER, SAFE_FOLDER):
@@ -617,7 +617,7 @@ def incident_handler():
                     print(f"[incident_handler] Lỗi copy {src} -> {dst}: {e}")
         
         incident_queue.task_done()
-
+# chạy incident_handler (thread)
 threading.Thread(target=incident_handler, daemon=True).start()
 
 
@@ -826,74 +826,121 @@ def unknow_scan_batch(stop_event, stats):
 # WEBSOCKET
 # ==========================
 async def push_stats():
-    # Metrics L1
+    """
+    Coroutine bất đồng bộ:
+    - Thu thập toàn bộ metrics của hệ thống (L1, L2, throughput, latency)
+    - Đóng gói thành JSON
+    - Push realtime cho tất cả WebSocket client đang kết nối
+    """
+
+    # ====== TÍNH METRICS LAYER-1 (REQUEST LEVEL) ======
+    # Precision, Recall, F1 của L1 (LLM + rule-based)
     p1, r1, f1_l1 = calc_metrics_l1()
 
-    # Metrics L2 (file level)
+    # ====== TÍNH METRICS LAYER-2 (FILE LEVEL - LogBERT) ======
+    # Precision, Recall, F1 của L2 (anomaly detection theo file)
     p2, r2, f1_l2 = calc_metrics_l2()
 
+    # ====== THROUGHPUT HỆ THỐNG ======
+    # rps: request per second
+    # tps: token per second (LLM output)
     rps, tps = calc_throughput()
+
+    # ====== TÍNH LATENCY TRUNG BÌNH ======
+    # Lọc ra các latency hợp lệ (int hoặc float)
     lat_vals = [x for x in stats_l1["latencies"] if isinstance(x, (int, float))]
+
+    # Tính latency trung bình (tránh chia cho 0)
     avg_lat = sum(lat_vals) / len(lat_vals) if lat_vals else 0
+
+    # ====== SỐ REQUEST UNKNOWN HIỆN TẠI (CHƯA ĐƯỢC L2 RESOLVE) ======
     unknown = stats_l1["unknown"]
+
+    # ====== ĐÓNG GÓI TOÀN BỘ METRICS THÀNH JSON ======
     msg = json.dumps(
         {
             # ==========================
-            # REQUEST-LEVEL (L1 SCORES)
+            # REQUEST-LEVEL METRICS (L1)
             # ==========================
-            "l1_TP": eval_stats_l1["TP"],
-            "l1_TN": eval_stats_l1["TN"],
-            "l1_FP": eval_stats_l1["FP"],
-            "l1_FN": eval_stats_l1["FN"],
-            "l1_precision": p1,
-            "l1_recall": r1,
-            "l1_f1": f1_l1,
+            "l1_TP": eval_stats_l1["TP"],   # True Positive (malicious → malicious)
+            "l1_TN": eval_stats_l1["TN"],   # True Negative (safe → safe)
+            "l1_FP": eval_stats_l1["FP"],   # False Positive (safe → malicious)
+            "l1_FN": eval_stats_l1["FN"],   # False Negative (malicious → safe)
+
+            "l1_precision": p1,             # TP / (TP + FP)
+            "l1_recall": r1,                # TP / (TP + FN)
+            "l1_f1": f1_l1,                 # Harmonic mean
+
             # ==========================
-            # FILE-LEVEL (L2 SCORES)
+            # FILE-LEVEL METRICS (L2)
             # ==========================
             "l2_TP": eval_stats_l2["TP"],
             "l2_TN": eval_stats_l2["TN"],
             "l2_FP": eval_stats_l2["FP"],
             "l2_FN": eval_stats_l2["FN"],
+
             "l2_precision": p2,
             "l2_recall": r2,
             "l2_f1": f1_l2,
-            # ==========================
-            # SYSTEM STATS
-            # ==========================
-            "total": stats_l1["total"],
-            "safe": stats_l1["safe"],
-            "malicious": stats_l1["malicious"],
-            "unknown": stats_l1["unknown"],
-            "rps": rps,
-            "tps": tps,
-            "avg_latency": avg_lat,
 
+            # ==========================
+            # SYSTEM RUNTIME STATS
+            # ==========================
+            "total": stats_l1["total"],         # Tổng request đã xử lý
+            "safe": stats_l1["safe"],           # Tổng request safe
+            "malicious": stats_l1["malicious"], # Tổng request malicious
+            "unknown": stats_l1["unknown"],     # Tổng request unknown (chờ L2)
+
+            "rps": rps,                         # Request / second
+            "tps": tps,                         # Token / second (LLM)
+            "avg_latency": avg_lat,             # Latency trung bình L1
+
+            # ==========================
+            # LỊCH SỬ FILE ĐÃ ĐƯỢC RESOLVE (L2)
+            # ==========================
             "recent_logs": list(resolved_history)
         }
     )
 
+    # Debug: in TPS ra console
     print("TPS", tps)
-    dead = []
+
+    # ====== GỬI METRICS ĐẾN TẤT CẢ WS CLIENT ======
+    dead = []  # Danh sách client bị disconnect
+
     for ws in ws_clients:
         try:
+            # Gửi JSON metrics cho client
             await ws.send(msg)
         except:
+            # Nếu gửi lỗi (client chết) → đánh dấu để xóa
             dead.append(ws)
 
+    # ====== DỌN CLIENT ĐÃ CHẾT ======
     for ws in dead:
         ws_clients.remove(ws)
 
 
 def push_stats_safe():
+    """
+    Wrapper an toàn để gọi push_stats() từ thread thường
+    (không nằm trong asyncio event loop)
+    """
     if ws_loop:
+        # Đẩy coroutine push_stats vào event loop chính
         asyncio.run_coroutine_threadsafe(push_stats(), ws_loop)
 
 
 def stats_pusher():
+    """
+    Thread nền:
+    - Cứ mỗi 5 giây
+    - Gọi push_stats_safe()
+    - Đảm bảo stats luôn được push đều đặn
+    """
     while True:
         push_stats_safe()
-        time.sleep(5)  # gửi mỗi giây
+        time.sleep(5)
 
 
 threading.Thread(target=stats_pusher, daemon=True).start()
@@ -901,7 +948,6 @@ threading.Thread(target=stats_pusher, daemon=True).start()
 # ==========================
 # MAIN SIMULATION
 # ==========================
-
 
 # Load logs and enqueue requests
 # We will simulate the speed at which log files are generated in real time.
