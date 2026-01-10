@@ -104,8 +104,6 @@ This project uses the following technologies and libraries:
 - **Networking & services:** requests, websockets
 - **Dev tooling:** tqdm, matplotlib for plotting and simple analysis
 
-> Note: I received your PDF attachment. If you'd like, I can extract chapters 3–5 and add a concise summary of your system design, data flow, and evaluation details into this README — say "Yes, add chapters 3–5" and I'll proceed.
-
 ---
 
 ## Steps to prepare data, run tests & demos ▶️
